@@ -115,6 +115,10 @@ function update_script() {
 
     NODE_VERSION="24" NODE_MODULE="corepack" setup_nodejs
 
+    # Lina and Luna sources are deleted after each build, so their version
+    # markers must not let the fetch be skipped
+    rm -f ~/.lina ~/.luna
+
     CLEAN_INSTALL=1 fetch_and_deploy_gh_tag "lina" "jumpserver/lina" "$JMS_TAG" "/opt/lina-src"
 
     msg_info "Building Lina"
