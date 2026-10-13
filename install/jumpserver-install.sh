@@ -70,10 +70,18 @@ fetch_and_deploy_gh_tag "guacd" "apache/guacamole-server"
 msg_info "Building guacd"
 cd /opt/guacd
 $STD autoreconf -fi
-$STD ./configure --with-systemd-dir=/etc/systemd/system --disable-guacenc
+# FreeRDP 3.6+ deprecates APIs guacd still calls, which -Werror turns into build failures
+$STD ./configure --with-systemd-dir=/etc/systemd/system --disable-guacenc CFLAGS="-O2 -Wno-error=deprecated-declarations"
 $STD make -j"$(nproc)"
 $STD make install
 $STD ldconfig
+# guacd binds "localhost" (::1 here) by default, but KoKo dials 127.0.0.1
+mkdir -p /etc/guacamole
+cat <<EOF >/etc/guacamole/guacd.conf
+[server]
+bind_host = 127.0.0.1
+bind_port = 4822
+EOF
 systemctl enable -q --now guacd
 msg_ok "Built guacd"
 
@@ -134,7 +142,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl enable -q --now jumpserver
+systemctl enable -q jumpserver
 msg_ok "Created Core Service"
 
 fetch_and_deploy_gh_tag "koko" "jumpserver/koko" "$JMS_TAG"
@@ -186,7 +194,6 @@ After=network.target guacd.service jumpserver.service
 [Service]
 Type=simple
 WorkingDirectory=/opt/koko
-Environment=LD_LIBRARY_PATH=/opt/libghostty-vt/lib
 ExecStart=/opt/koko/koko
 Restart=on-failure
 RestartSec=5
@@ -194,7 +201,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl enable -q --now koko
+systemctl enable -q koko
 msg_ok "Configured KoKo"
 
 fetch_and_deploy_gh_tag "lina" "jumpserver/lina" "$JMS_TAG" "/opt/lina-src"
@@ -220,11 +227,18 @@ mv .output/public /opt/luna
 rm -rf /opt/luna-src
 msg_ok "Built Luna"
 
-msg_info "Securing Admin Account"
+msg_info "Starting Services"
+# The core only accepts terminal registration for 5 minutes after it starts,
+# so KoKo has to come up right behind it instead of after the long builds
+systemctl start jumpserver
 for _ in $(seq 1 90); do
   curl -fsS -o /dev/null http://127.0.0.1:8080/api/health/ 2>/dev/null && break
   sleep 5
 done
+systemctl start koko
+msg_ok "Started Services"
+
+msg_info "Securing Admin Account"
 JMS_ADMIN_PASS=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | cut -c1-16)
 cd /opt/jumpserver
 PYTHONPATH=/opt/jumpserver/apps DJANGO_SETTINGS_MODULE=jumpserver.settings $STD .venv/bin/python3 -c "
@@ -236,7 +250,7 @@ u.set_password('${JMS_ADMIN_PASS}')
 u.need_update_password = False
 u.save()
 "
-cat <<EOF >~/jumpserver.creds
+cat <<EOF >>~/jumpserver.creds
 JumpServer Admin Credentials
 Username: admin
 Password: ${JMS_ADMIN_PASS}

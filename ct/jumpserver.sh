@@ -42,7 +42,8 @@ function update_script() {
     msg_info "Building guacd"
     cd /opt/guacd
     $STD autoreconf -fi
-    $STD ./configure --with-systemd-dir=/etc/systemd/system --disable-guacenc
+    # FreeRDP 3.6+ deprecates APIs guacd still calls, which -Werror turns into build failures
+    $STD ./configure --with-systemd-dir=/etc/systemd/system --disable-guacenc CFLAGS="-O2 -Wno-error=deprecated-declarations"
     $STD make -j"$(nproc)"
     $STD make install
     $STD ldconfig
@@ -60,6 +61,9 @@ function update_script() {
 
     CLEAN_INSTALL=1 fetch_and_deploy_gh_release "jumpserver" "jumpserver/jumpserver" "tarball" "latest" "" "" "v5."
     JMS_TAG="v$(<~/.jumpserver)"
+    CLEAN_INSTALL=1 fetch_and_deploy_gh_tag "koko" "jumpserver/koko" "$JMS_TAG"
+
+    restore_backup
 
     msg_info "Updating Python Environment"
     cd /opt/jumpserver
@@ -78,8 +82,6 @@ function update_script() {
     cd /opt/jumpserver/apps
     $STD ../.venv/bin/python3 manage.py compilemessages
     msg_ok "Updated Python Environment"
-
-    CLEAN_INSTALL=1 fetch_and_deploy_gh_tag "koko" "jumpserver/koko" "$JMS_TAG"
 
     GHOSTTY_COMMIT=$(grep -oP 'libghostty-vt:ghostty-\K[0-9a-f]+' /opt/koko/Dockerfile-base)
     ZIG_VERSION=$(grep -oP 'libghostty-vt:ghostty-[0-9a-f]+-zig-\K[0-9.]+' /opt/koko/Dockerfile-base)
@@ -110,8 +112,6 @@ function update_script() {
 
     fetch_and_deploy_gh_release "usql" "jumpserver-dev/usql" "prebuild" "$USQL_VERSION" "/opt/usql" "usql-*-linux-$(arch_resolve amd64 arm64).tar.gz"
     fetch_and_deploy_gh_release "k8s-bundle" "jumpserver-dev/k8s-bundle" "binary" "$K8S_BUNDLE_VERSION" "" "k8s-bundle_$(arch_resolve amd64 arm64).deb"
-
-    restore_backup
 
     NODE_VERSION="24" NODE_MODULE="corepack" setup_nodejs
 
