@@ -219,7 +219,8 @@ fetch_and_deploy_gh_tag "luna" "jumpserver/luna" "$JMS_TAG" "/opt/luna-src"
 
 msg_info "Building Luna"
 cd /opt/luna-src
-export ELECTRON_SKIP_BINARY_DOWNLOAD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 HUSKY=0
+# NUXT_TELEMETRY_DISABLED stops nuxt generate from waiting on a consent prompt
+export ELECTRON_SKIP_BINARY_DOWNLOAD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 HUSKY=0 NUXT_TELEMETRY_DISABLED=1
 $STD pnpm --filter jumpserver-web... install --frozen-lockfile --config.node-linker=isolated
 $STD pnpm --config.node-linker=isolated --filter jumpserver-web web:generate
 rm -rf /opt/luna
