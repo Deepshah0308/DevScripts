@@ -58,7 +58,9 @@ jobs:
         run: bash .github/workflows/scripts/fedora-image-test.sh
 
       - name: UniFi VM provisioning
+        if: ${{ hashFiles('vm/unifi-os-server-vm.sh') != '' }}
         run: bash .github/workflows/scripts/unifi-vm-test.sh
 
       - name: ZimaOS release and ISO selection
+        if: ${{ hashFiles('vm/zimaos-vm.sh') != '' }}
         run: bash .github/workflows/scripts/zima-release-test.sh
