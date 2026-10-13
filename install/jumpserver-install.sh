@@ -16,7 +16,11 @@ update_os
 msg_info "Installing Dependencies"
 $STD apt install -y \
   build-essential \
+  autoconf \
+  automake \
+  libtool \
   pkg-config \
+  xz-utils \
   default-libmysqlclient-dev \
   freetds-dev \
   gettext \
@@ -24,6 +28,10 @@ $STD apt install -y \
   libkrb5-dev \
   libldap2-dev \
   libsasl2-dev \
+  libx11-dev \
+  openssh-client \
+  sshpass \
+  bubblewrap \
   libcairo2-dev \
   libjpeg62-turbo-dev \
   libpng-dev \
@@ -55,15 +63,13 @@ systemctl enable -q --now redis-server
 msg_ok "Started Redis"
 
 PYTHON_VERSION="3.14" setup_uv
+NODE_VERSION="24" NODE_MODULE="corepack" setup_nodejs
 
-fetch_and_deploy_from_url "https://dlcdn.apache.org/guacamole/1.5.5/source/guacamole-server-1.5.5.tar.gz" "/opt/guacamole-server"
+fetch_and_deploy_gh_tag "guacd" "apache/guacamole-server"
 
 msg_info "Building guacd"
-cd /opt/guacamole-server
-find . -exec touch -t 202401010000 {} +
-touch -t 202401010001 configure.ac aclocal.m4 config.h.in
-touch -t 202401010002 configure
-find . -name "Makefile.in" -exec touch -t 202401010003 {} +
+cd /opt/guacd
+$STD autoreconf -fi
 $STD ./configure --with-systemd-dir=/etc/systemd/system --disable-guacenc
 $STD make -j"$(nproc)"
 $STD make install
@@ -71,11 +77,12 @@ $STD ldconfig
 systemctl enable -q --now guacd
 msg_ok "Built guacd"
 
-fetch_and_deploy_gh_release "jumpserver" "jumpserver/jumpserver" "tarball" "latest" "" "" "v4."
-
-JMS_BOOTSTRAP_TOKEN=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | cut -c1-32)
+fetch_and_deploy_gh_release "jumpserver" "jumpserver/jumpserver" "tarball" "latest" "" "" "v5."
+# KoKo, Lina and Luna must match the core release exactly
+JMS_TAG="v$(<~/.jumpserver)"
 
 msg_info "Configuring JumpServer Core"
+JMS_BOOTSTRAP_TOKEN=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | cut -c1-32)
 cat <<EOF >/opt/jumpserver/config.yml
 SECRET_KEY: $(openssl rand -base64 64 | tr -dc 'a-zA-Z0-9' | cut -c1-49)
 BOOTSTRAP_TOKEN: ${JMS_BOOTSTRAP_TOKEN}
@@ -105,6 +112,8 @@ until ANSIBLE_COLLECTIONS_PATHS="/opt/jumpserver/.venv/lib/python3.14/site-packa
   fi
   sleep 15
 done
+cd /opt/jumpserver/apps
+$STD ../.venv/bin/python3 manage.py compilemessages
 msg_ok "Configured JumpServer Core"
 
 msg_info "Creating Core Service"
@@ -128,12 +137,96 @@ EOF
 systemctl enable -q --now jumpserver
 msg_ok "Created Core Service"
 
+fetch_and_deploy_gh_tag "koko" "jumpserver/koko" "$JMS_TAG"
+
+# Toolchain pins come from KoKo's own build files so they follow each release
+GHOSTTY_COMMIT=$(grep -oP 'libghostty-vt:ghostty-\K[0-9a-f]+' /opt/koko/Dockerfile-base)
+ZIG_VERSION=$(grep -oP 'libghostty-vt:ghostty-[0-9a-f]+-zig-\K[0-9.]+' /opt/koko/Dockerfile-base)
+USQL_VERSION=$(grep -oP 'ARG USQL_VERSION=\K\S+' /opt/koko/Dockerfile-base)
+K8S_BUNDLE_VERSION=$(grep -oP 'ARG K8S_BUNDLE_VERSION=\K\S+' /opt/koko/Dockerfile-base)
+GO_VERSION=$(grep -oP '^go \K\S+' /opt/koko/go.mod) setup_go
+
+fetch_and_deploy_from_url "https://ziglang.org/download/${ZIG_VERSION}/zig-$(arch_resolve x86_64 aarch64)-linux-${ZIG_VERSION}.tar.xz" "/opt/zig"
+fetch_and_deploy_from_url "https://github.com/ghostty-org/ghostty/archive/${GHOSTTY_COMMIT}.tar.gz" "/opt/ghostty"
+
+msg_info "Building libghostty-vt"
+cd /opt/ghostty
+$STD /opt/zig/zig build -Demit-lib-vt -Doptimize=ReleaseFast -Dcpu=baseline --prefix /opt/libghostty-vt
+rm -rf /opt/ghostty /opt/zig ~/.cache/zig
+echo "$GHOSTTY_COMMIT" >~/.libghostty-vt
+msg_ok "Built libghostty-vt"
+
+msg_info "Building KoKo"
+cd /opt/koko
+export PKG_CONFIG_PATH=/opt/libghostty-vt/share/pkgconfig
+$STD make build VERSION="$JMS_TAG"
+mv build/koko koko
+rm -rf build
+msg_ok "Built KoKo"
+
+fetch_and_deploy_gh_release "usql" "jumpserver-dev/usql" "prebuild" "$USQL_VERSION" "/opt/usql" "usql-*-linux-$(arch_resolve amd64 arm64).tar.gz"
+ln -sf /opt/usql/usql /usr/local/bin/usql
+fetch_and_deploy_gh_release "k8s-bundle" "jumpserver-dev/k8s-bundle" "binary" "$K8S_BUNDLE_VERSION" "" "k8s-bundle_$(arch_resolve amd64 arm64).deb"
+
+msg_info "Configuring KoKo"
+cat <<EOF >/opt/koko/config.yml
+CORE_HOST: http://127.0.0.1:8080
+BOOTSTRAP_TOKEN: ${JMS_BOOTSTRAP_TOKEN}
+REDIS_HOST: 127.0.0.1
+REDIS_PORT: 6379
+GUA_HOST: 127.0.0.1
+GUA_PORT: 4822
+WEB_PROXY_RECORDING_ENABLED: false
+EOF
+cat <<EOF >/etc/systemd/system/koko.service
+[Unit]
+Description=JumpServer KoKo Service
+After=network.target guacd.service jumpserver.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/koko
+Environment=LD_LIBRARY_PATH=/opt/libghostty-vt/lib
+ExecStart=/opt/koko/koko
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable -q --now koko
+msg_ok "Configured KoKo"
+
+fetch_and_deploy_gh_tag "lina" "jumpserver/lina" "$JMS_TAG" "/opt/lina-src"
+
+msg_info "Building Lina"
+cd /opt/lina-src
+$STD yarn install --immutable
+$STD yarn build:prod
+rm -rf /opt/lina
+mv lina /opt/lina
+rm -rf /opt/lina-src
+msg_ok "Built Lina"
+
+fetch_and_deploy_gh_tag "luna" "jumpserver/luna" "$JMS_TAG" "/opt/luna-src"
+
+msg_info "Building Luna"
+cd /opt/luna-src
+export ELECTRON_SKIP_BINARY_DOWNLOAD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 HUSKY=0
+$STD pnpm --filter jumpserver-web... install --frozen-lockfile --config.node-linker=isolated
+$STD pnpm --config.node-linker=isolated --filter jumpserver-web web:generate
+rm -rf /opt/luna
+mv .output/public /opt/luna
+rm -rf /opt/luna-src
+msg_ok "Built Luna"
+
 msg_info "Securing Admin Account"
 for _ in $(seq 1 90); do
   curl -fsS -o /dev/null http://127.0.0.1:8080/api/health/ 2>/dev/null && break
   sleep 5
 done
 JMS_ADMIN_PASS=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | cut -c1-16)
+cd /opt/jumpserver
 PYTHONPATH=/opt/jumpserver/apps DJANGO_SETTINGS_MODULE=jumpserver.settings $STD .venv/bin/python3 -c "
 import django
 django.setup()
@@ -150,67 +243,7 @@ Password: ${JMS_ADMIN_PASS}
 EOF
 msg_ok "Secured Admin Account"
 
-fetch_and_deploy_gh_release "koko" "jumpserver/koko" "prebuild" "latest" "/opt/koko" "koko-v4.*-linux-$(arch_resolve amd64 arm64).tar.gz" "v4."
-
-msg_info "Configuring KoKo"
-cat <<EOF >/opt/koko/config.yml
-CORE_HOST: http://127.0.0.1:8080
-BOOTSTRAP_TOKEN: ${JMS_BOOTSTRAP_TOKEN}
-REDIS_HOST: 127.0.0.1
-REDIS_PORT: 6379
-EOF
-cat <<EOF >/etc/systemd/system/koko.service
-[Unit]
-Description=JumpServer KoKo Service
-After=network.target jumpserver.service
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/koko
-ExecStart=/opt/koko/koko
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl enable -q --now koko
-msg_ok "Configured KoKo"
-
-fetch_and_deploy_gh_release "lion" "jumpserver/lion-release" "prebuild" "latest" "/opt/lion" "lion-v*-linux-$(arch_resolve amd64 arm64).tar.gz"
-
-msg_info "Configuring Lion"
-cat <<EOF >/opt/lion/config.yml
-CORE_HOST: http://127.0.0.1:8080
-BOOTSTRAP_TOKEN: ${JMS_BOOTSTRAP_TOKEN}
-GUA_HOST: 127.0.0.1
-GUA_PORT: 4822
-REDIS_HOST: 127.0.0.1
-REDIS_PORT: 6379
-EOF
-cat <<EOF >/etc/systemd/system/lion.service
-[Unit]
-Description=JumpServer Lion Service
-After=network.target guacd.service jumpserver.service
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/lion
-ExecStart=/opt/lion/lion
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl enable -q --now lion
-msg_ok "Configured Lion"
-
-fetch_and_deploy_gh_release "lina" "jumpserver/lina" "prebuild" "latest" "/opt/lina" "lina-v4.*.tar.gz" "v4."
-fetch_and_deploy_gh_release "luna" "jumpserver/luna" "prebuild" "latest" "/opt/luna" "luna-v4.*.tar.gz" "v4."
-
 msg_info "Configuring Nginx"
-rm -f /etc/nginx/sites-enabled/default
 cat <<EOF >/etc/nginx/sites-available/jumpserver
 server {
     listen 80 default_server;
@@ -246,13 +279,13 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
     }
 
     location ~ ^/(core|api|media)/ {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host \$http_host;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_ignore_client_abort on;
         proxy_connect_timeout 600;
         proxy_send_timeout 600;
@@ -268,23 +301,7 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_ignore_client_abort on;
-        proxy_connect_timeout 600;
-        proxy_send_timeout 600;
-        proxy_read_timeout 600;
-        send_timeout 6000;
-    }
-
-    location /lion/ {
-        proxy_pass http://127.0.0.1:8081;
-        proxy_buffering off;
-        proxy_http_version 1.1;
-        proxy_request_buffering off;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_ignore_client_abort on;
         proxy_connect_timeout 600;
         proxy_send_timeout 600;
@@ -293,9 +310,7 @@ server {
     }
 }
 EOF
-ln -sf /etc/nginx/sites-available/jumpserver /etc/nginx/sites-enabled/jumpserver
-systemctl enable -q nginx
-systemctl restart nginx
+nginx_enable_site "jumpserver"
 msg_ok "Configured Nginx"
 
 motd_ssh

@@ -32,8 +32,12 @@
   },
   "notes": [
     {
-      "text": "The generated admin password is saved to ~/jumpserver.creds inside the container. This script sets it directly (bypassing upstream's own admin/ChangeMe default) because logging in with that default currently crashes with a server error on JumpServer v4.10.19 — its own weak-password check raises an exception the API can't render.",
+      "text": "The generated admin password is saved to ~/jumpserver.creds inside the container.",
       "type": "info"
+    },
+    {
+      "text": "Upstream only ships JumpServer v5 as Docker images, so this script builds KoKo, Lina and Luna from source at the same tag as the core. Installs and updates take a long time and need the default resources.",
+      "type": "warning"
     },
     {
       "text": "The SSH bastion (character-protocol) endpoint is on port 2222, e.g. ssh -p 2222 <user>@<container-ip> — this is separate from the web console on port 80.",
@@ -41,10 +45,6 @@
     },
     {
       "text": "First start takes several minutes: the core service runs database migrations, downloads a GeoIP database, and installs built-in RDP applets on its own before the web UI becomes reachable.",
-      "type": "info"
-    },
-    {
-      "text": "This is a large, multi-service stack (core, KoKo, Lion + guacd, PostgreSQL, Redis, Nginx) — the default 4 vCPU / 8GB RAM / 50GB disk sizing reflects that, not a typical single-service app.",
       "type": "info"
     }
   ]
