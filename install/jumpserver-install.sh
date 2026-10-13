@@ -228,18 +228,14 @@ mv .output/public /opt/luna
 rm -rf /opt/luna-src
 msg_ok "Built Luna"
 
-msg_info "Starting Services"
-# The core only accepts terminal registration for 5 minutes after it starts,
-# so KoKo has to come up right behind it instead of after the long builds
-systemctl start jumpserver
-for _ in $(seq 1 90); do
-  curl -fsS -o /dev/null http://127.0.0.1:8080/api/health/ 2>/dev/null && break
-  sleep 5
-done
-systemctl start koko
-msg_ok "Started Services"
+msg_info "Initializing Database"
+cd /opt/jumpserver
+$STD .venv/bin/python3 jms upgrade_db
+msg_ok "Initialized Database"
 
 msg_info "Securing Admin Account"
+# Booting Django here (outside upgrade_db) also generates TERMINAL_HOST_KEY,
+# so the core service loads it on start instead of caching an empty one
 JMS_ADMIN_PASS=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | cut -c1-16)
 cd /opt/jumpserver
 PYTHONPATH=/opt/jumpserver/apps DJANGO_SETTINGS_MODULE=jumpserver.settings $STD .venv/bin/python3 -c "
@@ -257,6 +253,17 @@ Username: admin
 Password: ${JMS_ADMIN_PASS}
 EOF
 msg_ok "Secured Admin Account"
+
+msg_info "Starting Services"
+# The core only accepts terminal registration for 5 minutes after it starts,
+# so KoKo has to come up right behind it instead of after the long builds
+systemctl start jumpserver
+for _ in $(seq 1 90); do
+  curl -fsS -o /dev/null http://127.0.0.1:8080/api/health/ 2>/dev/null && break
+  sleep 5
+done
+systemctl start koko
+msg_ok "Started Services"
 
 msg_info "Configuring Nginx"
 cat <<EOF >/etc/nginx/sites-available/jumpserver
