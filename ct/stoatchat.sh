@@ -63,7 +63,9 @@ function update_script() {
     $STD pnpm --filter client exec lingui compile --typescript
     $STD pnpm --filter client exec node scripts/copyAssets.mjs
     $STD pnpm --filter client exec panda codegen
-    $STD pnpm --filter client exec vite build
+    VITE_API_URL="$(sed -n 's/^api = "\(.*\)"$/\1/p' /Revolt.toml)" \
+      VITE_HOST="$(sed -n 's|^app = "https\{0,1\}://\([^"/]*\).*|\1|p' /Revolt.toml)" \
+      $STD pnpm --filter client exec vite build
     msg_ok "Updated Web Frontend"
 
     restore_backup
@@ -83,4 +85,4 @@ description
 msg_ok "Completed Successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
 echo -e "${INFO}${YW}Access it using the following URL:${CL}"
-echo -e "${GATEWAY}${BGN}http://${IP}${CL}"
+echo -e "${GATEWAY}${BGN}https://${IP}${CL}"

@@ -9,7 +9,7 @@
     "updateable": true,
     "privileged": false,
     "architectures": ["amd64"],
-    "interface_port": 80,
+    "interface_port": 443,
     "documentation": "https://github.com/stoatchat/self-hosted",
     "website": "https://stoat.chat",
     "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/stoatchat.webp",
