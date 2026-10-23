@@ -39,7 +39,7 @@ vm_preflight
 vm_require_tools jq xz
 
 for channel in stable beta dev; do
-  channel_version="$(curl -fsSL "https://raw.githubusercontent.com/home-assistant/version/master/${channel}.json" | jq -er '.ova')"
+  channel_version="$(curl -fsSL "https://raw.githubusercontent.com/home-assistant/version/master/${channel}.json" | jq -er '.hassos["generic-aarch64"]')"
   printf -v "${channel^^}" '%s' "$channel_version"
 done
 
