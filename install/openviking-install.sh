@@ -63,7 +63,7 @@ EOF
 
 _ov_wait_ready() {
   local ready=0
-  for _ in {1..30}; do
+  for _ in {1..60}; do
     if curl -fsS -o /dev/null "http://127.0.0.1:1933/health"; then
       ready=1
       break
@@ -71,20 +71,19 @@ _ov_wait_ready() {
     sleep 2
   done
   if [[ "$ready" -ne 1 ]]; then
-    msg_error "OpenViking did not become healthy within 60 seconds — check 'systemctl status openviking' (Debian) or 'rc-service openviking status' (Alpine)"
+    msg_error "OpenViking did not become healthy within 120 seconds — check 'systemctl status openviking'"
     exit 1
   fi
 }
 
-setup_deb_based() {
-  msg_info "Installing Dependencies"
-  $STD apt install -y openssl
-  msg_ok "Installed Dependencies"
+msg_info "Installing Dependencies"
+$STD apt install -y openssl
+msg_ok "Installed Dependencies"
 
-  _ov_install_server
+_ov_install_server
 
-  msg_info "Creating Service"
-  cat <<EOF >/etc/systemd/system/openviking.service
+msg_info "Creating Service"
+cat <<EOF >/etc/systemd/system/openviking.service
 [Unit]
 Description=OpenViking HTTP Server
 After=network.target
@@ -101,53 +100,9 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-  systemctl enable -q --now openviking
-  _ov_wait_ready
-  msg_ok "Created Service"
-}
-
-setup_alpine() {
-  msg_info "Installing Dependencies"
-  $STD apk add openssl
-  msg_ok "Installed Dependencies"
-
-  _ov_install_server
-
-  msg_info "Creating Service"
-  cat <<'EOF' >/etc/init.d/openviking
-#!/sbin/openrc-run
-name="OpenViking"
-description="OpenViking - a self-evolving context database for AI agents"
-
-command="/opt/openviking/bin/openviking-server"
-command_user="root"
-supervisor=supervise-daemon
-output_log="/var/log/openviking.log"
-error_log="/var/log/openviking.log"
-pidfile="/run/${RC_SVCNAME}.pid"
-respawn_delay=10
-
-depend() {
-  need net
-  after firewall
-}
-
-start_pre() {
-  checkpath -d -m 0750 -o root:root /opt/openviking_data
-  checkpath -f -m 0640 "$output_log"
-}
-EOF
-  chmod +x /etc/init.d/openviking
-  cat <<EOF >/etc/conf.d/openviking
-export OPENVIKING_CONFIG_FILE=/opt/openviking_data/ov.conf
-EOF
-  $STD rc-update add openviking default
-  $STD rc-service openviking start
-  _ov_wait_ready
-  msg_ok "Created Service"
-}
-
-run_os_setup
+systemctl enable -q --now openviking
+_ov_wait_ready
+msg_ok "Created Service"
 
 msg_info "Running OpenViking Doctor"
 if OPENVIKING_CONFIG_FILE=/opt/openviking_data/ov.conf /opt/openviking/bin/openviking-server doctor >/dev/null 2>&1; then
