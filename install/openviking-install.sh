@@ -13,21 +13,24 @@ setting_up_container
 network_check
 update_os
 
-_ov_install_server() {
-  PYTHON_VERSION="3.12" setup_uv
+msg_info "Installing Dependencies"
+$STD apt install -y openssl
+msg_ok "Installed Dependencies"
 
-  msg_info "Installing OpenViking"
-  $STD uv venv --python 3.12 /opt/openviking
-  $STD uv pip install --python /opt/openviking/bin/python openviking
-  cat <<EOF >~/.openviking-server
+PYTHON_VERSION="3.12" setup_uv
+
+msg_info "Installing OpenViking"
+$STD uv venv --python 3.12 /opt/openviking
+$STD uv pip install --python /opt/openviking/bin/python openviking
+cat <<EOF >~/.openviking-server
 $(get_latest_github_release "volcengine/OpenViking")
 EOF
-  msg_ok "Installed OpenViking"
+msg_ok "Installed OpenViking"
 
-  msg_info "Configuring OpenViking"
-  ROOT_API_KEY=$(openssl rand -hex 32)
-  mkdir -p /opt/openviking_data
-  cat <<EOF >/opt/openviking_data/ov.conf
+msg_info "Configuring OpenViking"
+ROOT_API_KEY=$(openssl rand -hex 32)
+mkdir -p /opt/openviking_data
+cat <<EOF >/opt/openviking_data/ov.conf
 {
   "server": {
     "host": "0.0.0.0",
@@ -57,30 +60,8 @@ EOF
   }
 }
 EOF
-  chmod 600 /opt/openviking_data/ov.conf
-  msg_ok "Configured OpenViking"
-}
-
-_ov_wait_ready() {
-  local ready=0
-  for _ in {1..60}; do
-    if curl -fsS -o /dev/null "http://127.0.0.1:1933/health"; then
-      ready=1
-      break
-    fi
-    sleep 2
-  done
-  if [[ "$ready" -ne 1 ]]; then
-    msg_error "OpenViking did not become healthy within 120 seconds — check 'systemctl status openviking'"
-    exit 1
-  fi
-}
-
-msg_info "Installing Dependencies"
-$STD apt install -y openssl
-msg_ok "Installed Dependencies"
-
-_ov_install_server
+chmod 600 /opt/openviking_data/ov.conf
+msg_ok "Configured OpenViking"
 
 msg_info "Creating Service"
 cat <<EOF >/etc/systemd/system/openviking.service
@@ -101,7 +82,19 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 systemctl enable -q --now openviking
-_ov_wait_ready
+
+ready=0
+for _ in {1..60}; do
+  if curl -fsS -o /dev/null "http://127.0.0.1:1933/health"; then
+    ready=1
+    break
+  fi
+  sleep 2
+done
+if [[ "$ready" -ne 1 ]]; then
+  msg_error "OpenViking did not become healthy within 120 seconds — check 'systemctl status openviking'"
+  exit 1
+fi
 msg_ok "Created Service"
 
 msg_info "Running OpenViking Doctor"
